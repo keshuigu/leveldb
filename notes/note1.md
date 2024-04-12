@@ -67,59 +67,59 @@ Benchmark()
 
 ```cpp
 void Run() {
-    PrintHeader(); // 打印环境信息
-    Open(); // 打开数据库
+  PrintHeader(); // 打印环境信息
+  Open(); // 打开数据库
 
-    const char* benchmarks = FLAGS_benchmarks;
+  const char* benchmarks = FLAGS_benchmarks;
 
-    // 执行每一个测试
-    while (benchmarks != nullptr) {
-      const char* sep = strchr(benchmarks, ',');
-      Slice name;
-      if (sep == nullptr) {
-        name = benchmarks;
-        benchmarks = nullptr;
+  // 执行每一个测试
+  while (benchmarks != nullptr) {
+    const char* sep = strchr(benchmarks, ',');
+    Slice name;
+    if (sep == nullptr) {
+      name = benchmarks;
+      benchmarks = nullptr;
+    } else {
+      name = Slice(benchmarks, sep - benchmarks);
+      benchmarks = sep + 1;
+    }
+
+    // Reset parameters that may be overridden below
+    num_ = FLAGS_num;
+    reads_ = (FLAGS_reads < 0 ? FLAGS_num : FLAGS_reads);
+    value_size_ = FLAGS_value_size;
+    entries_per_batch_ = 1;
+    write_options_ = WriteOptions();
+    /**
+     *声明了一个名为method的指针，这个指针指向Benchmark类的一个成员函数，
+      *这个成员函数的参数是ThreadState类型的指针，返回类型是void。
+    */
+    void (Benchmark::*method)(ThreadState*) = nullptr;
+    bool fresh_db = false;
+    int num_threads = FLAGS_threads;
+
+    // 设置benchmark方法
+    ...
+
+    // 如果需要刷新数据库，删除数据库重新打开
+    if (fresh_db) {
+      if (FLAGS_use_existing_db) {
+        std::fprintf(stdout, "%-12s : skipped (--use_existing_db is true)\n",
+                      name.ToString().c_str());
+        method = nullptr;
       } else {
-        name = Slice(benchmarks, sep - benchmarks);
-        benchmarks = sep + 1;
-      }
-
-      // Reset parameters that may be overridden below
-      num_ = FLAGS_num;
-      reads_ = (FLAGS_reads < 0 ? FLAGS_num : FLAGS_reads);
-      value_size_ = FLAGS_value_size;
-      entries_per_batch_ = 1;
-      write_options_ = WriteOptions();
-      /**
-       *声明了一个名为method的指针，这个指针指向Benchmark类的一个成员函数，
-       *这个成员函数的参数是ThreadState类型的指针，返回类型是void。
-      */
-      void (Benchmark::*method)(ThreadState*) = nullptr;
-      bool fresh_db = false;
-      int num_threads = FLAGS_threads;
-
-      // 设置benchmark方法
-      ...
-
-      // 如果需要刷新数据库，删除数据库重新打开
-      if (fresh_db) {
-        if (FLAGS_use_existing_db) {
-          std::fprintf(stdout, "%-12s : skipped (--use_existing_db is true)\n",
-                       name.ToString().c_str());
-          method = nullptr;
-        } else {
-          delete db_;
-          db_ = nullptr;
-          DestroyDB(FLAGS_db, Options());
-          Open();
-        }
-      }
-      // 根据method 执行对应的Benchmark
-      if (method != nullptr) {
-        RunBenchmark(num_threads, name, method);
+        delete db_;
+        db_ = nullptr;
+        DestroyDB(FLAGS_db, Options());
+        Open();
       }
     }
+    // 根据method 执行对应的Benchmark
+    if (method != nullptr) {
+      RunBenchmark(num_threads, name, method);
+    }
   }
+}
 ```
 
 TODO: 分析每个Benchmark具体的执行逻辑
