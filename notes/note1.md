@@ -138,7 +138,6 @@ void DoWrite(ThreadState* thread, bool seq) {
     }
     // 随机数据生成器
     RandomGenerator gen;
-    // TODO WriteBatch
     WriteBatch batch;
     // TODO Status
     Status s;
@@ -171,7 +170,7 @@ void DoWrite(ThreadState* thread, bool seq) {
   }
 ```
 
-整体逻辑还是比较简单的，接下来我们深入研究一下Slice和注释中的三个TODO对应的类都是什么
+整体逻辑还是比较简单的，接下来我们深入研究一下`Slice`，`WriteBatch`，`KeyBuffer`，`Status`都是什么
 
 ### Slice
 
@@ -381,21 +380,21 @@ class WriteBatchInternal {
   static void SetCount(WriteBatch* batch, int n);
 
   // 返回sequence number
+  // typedef uint64_t SequenceNumber;
   static SequenceNumber Sequence(const WriteBatch* batch);
 
   // 设置sequence number
   static void SetSequence(WriteBatch* batch, SequenceNumber seq);
 
-  // 下面的函数TODO
-
+  // 直接返回rep_
   static Slice Contents(const WriteBatch* batch) { return Slice(batch->rep_); }
 
   static size_t ByteSize(const WriteBatch* batch) { return batch->rep_.size(); }
-
+  // 设置rep_的内容
   static void SetContents(WriteBatch* batch, const Slice& contents);
-
+  // 将rep_中的内容写入到数据库中
   static Status InsertInto(const WriteBatch* batch, MemTable* memtable);
-
+  // 将src的内容添加到dst->rep_中
   static void Append(WriteBatch* dst, const WriteBatch* src);
 };
 
@@ -491,7 +490,7 @@ Status WriteBatch::Iterate(Handler* handler) const {
         // 从input中拿出key和value
         if (GetLengthPrefixedSlice(&input, &key) &&
             GetLengthPrefixedSlice(&input, &value)) {
-          // handler 中 放入键值队
+          // handler 中 放入键值对
           handler->Put(key, value);
         } else {
           return Status::Corruption("bad WriteBatch Put");
@@ -588,7 +587,7 @@ class MemTableInserter : public WriteBatch::Handler {
 };
 }  // namespace
 
-//向b中插入数据
+//向数据库中插入数据
 //MemTableInserter 重写了Put和Delete方法
 //从而正确的进行迭代
 Status WriteBatchInternal::InsertInto(const WriteBatch* b, MemTable* memtable) {
@@ -615,8 +614,90 @@ void WriteBatchInternal::Append(WriteBatch* dst, const WriteBatch* src) {
 
 }  // namespace leveldb
 
+```
+
+注意到下面的函数中使用了一个没有见过的类`MemTable`：
+
+`Status WriteBatchInternal::InsertInto(const WriteBatch* b, MemTable* memtable)`
+
+好在`MemTable`的声明较短，这里进行一个简单的分析，以下代码位于`memtable.h`，日后再在详细分析
+
+```cpp
+namespace leveldb {
+
+//TODO
+class InternalKeyComparator;
+//TODO
+class MemTableIterator;
+
+class MemTable {
+ public:
+  // explicit 显式单参构造函数，避免隐式转换
+  // MemTable引用计数
+  // 初始引用为0。调用者必须至少调用一次Ref()
+  explicit MemTable(const InternalKeyComparator& comparator);
+  // 删除拷贝构造函数
+  MemTable(const MemTable&) = delete;
+  // 删除拷贝赋值运算符函数
+  MemTable& operator=(const MemTable&) = delete;
+
+  // 增加引用计数
+  void Ref() { ++refs_; }
+
+  // 减少引用计数，并在引用为0时销毁自身
+  void Unref() {
+    --refs_;
+    assert(refs_ >= 0);
+    if (refs_ <= 0) {
+      delete this;
+    }
+  }
+
+
+  // 此数据结构正在使用的数据字节数的估计值。并且，即使在修改MemTable时，调用此方法也是安全的。
+  size_t ApproximateMemoryUsage();
+
+  // 这个方法返回一个迭代器，这个迭代器可以用于访问memtable中的每个元素。
+  // 调用者必须确保在使用返回的迭代器时，底层的MemTable仍然存在
+  // 这个迭代器返回的键是由AppendInternalKey函数在db/format.{h,cc}模块中编码的内部键
+  Iterator* NewIterator();
+
+
+  // 将一个键值对添加到memtable中，同时指定一个序列号和类型
+  // 如果类型是kTypeDeletion，那么值通常会是空的
+  void Add(SequenceNumber seq, ValueType type, const Slice& key,
+           const Slice& value);
+
+  // 如果memtable中包含键对应的值，那么将这个值存储在*value中，并返回true。
+  // 如果memtable中包含键对应的删除标记，那么将一个NotFound()错误存储在*status中，并返回true。
+  // 如果memtable中既不包含键对应的值，也不包含键对应的删除标记，那么返回false
+  bool Get(const LookupKey& key, std::string* value, Status* s);
+
+ private:
+  friend class MemTableIterator;
+  friend class MemTableBackwardIterator;
+
+  struct KeyComparator {
+    const InternalKeyComparator comparator;
+    explicit KeyComparator(const InternalKeyComparator& c) : comparator(c) {}
+    int operator()(const char* a, const char* b) const;
+  };
+
+  typedef SkipList<const char*, KeyComparator> Table;
+
+  ~MemTable();  // Private since only Unref() should be used to delete it
+
+  KeyComparator comparator_;
+  int refs_;
+  Arena arena_;
+  Table table_;
+};
+
+}  // namespace leveldb
 
 ```
+`Memtable` 的实现暂时不分析，目前已经可以大致了解`WriteBatchInternal::InsertInto`在做什么了。事实上，`WriteBatchInternal::InsertInto`将逐个读取保存在`WriteBatch`中的所有操作记录，并利用`MemTableInserter`真正的保存到数据库中
+
 ### Status
 
 ### KeyBuffer
